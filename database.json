@@ -1,0 +1,32 @@
+{
+  "users": {
+    "123456789": {
+      "telegramId": "123456789",
+      "username": "Admin_Sample",
+      "balance": 1000000,
+      "history": []
+    }
+  },
+  "products": [
+    {
+      "id": "1715832000000",
+      "type": "acc",
+      "name": "Acc Liên Quân Mẫu",
+      "price": 20000,
+      "description": "Acc trắng thông tin, rank đồng",
+      "image": "",
+      "instruction": "Đăng nhập qua Garena",
+      "stock": ["tk_mau:mk_mau", "tk_mau2:mk_mau2"]
+    },
+    {
+      "id": "1715832000001",
+      "type": "hack",
+      "name": "Hack Free Fire VIP",
+      "price": 50000,
+      "description": "Bản mod xuyên tường, không khóa acc",
+      "image": "",
+      "instruction": "Tải file apk tại: https://thuetoolvip.site/huong-dan",
+      "stock": ["KEY-HACK-888-999", "KEY-HACK-111-222"]
+    }
+  ]
+}
