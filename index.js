@@ -93,7 +93,7 @@ const getHomeKeyboard = () => Markup.inlineKeyboard([
         Markup.button.callback('📜 LỊCH SỬ MUA', 'view_history')
     ],
     [
-        Markup.button.url('🤝 LIÊN HỆ ADMIN', 'https://t.me/thuetoolvip1'),
+        Markup.button.url('🤝 LIÊN HỆ ADMIN', 'https://t.me/XTABOY'),
         Markup.button.callback('📊 THỐNG KÊ', 'view_stats')
     ]
 ]);
