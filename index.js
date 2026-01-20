@@ -82,7 +82,7 @@ const MainMenuKeyboard = () => Markup.inlineKeyboard([
     [Markup.button.callback('🎮 TÀI KHOẢN GAME', 'nav_acc'), Markup.button.callback('🛠️ PHẦN MỀM HACK', 'nav_hack')],
     [Markup.button.callback('🔑 THUÊ KEY TOOL', 'nav_key'), Markup.button.callback('💳 NẠP TIỀN VÍ', 'nav_deposit')],
     [Markup.button.callback('👤 THÔNG TIN', 'nav_profile'), Markup.button.callback('📜 LỊCH SỬ', 'nav_history')],
-    [Markup.button.url('🤝 HỖ TRỢ TRỰC TUYẾN', 'https://t.me/thuetoolvip1')]
+    [Markup.button.url('🤝 HỖ TRỢ TRỰC TUYẾN', 'https://t.me/@XTABOY')]
 ]);
 
 /**
