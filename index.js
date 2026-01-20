@@ -3,196 +3,286 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs-extra');
 const path = require('path');
+const cron = require('node-cron');
 
-// --- ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY ---
-const BOT_TOKEN = '8551122673:AAEr8vR0YjMjVkATv6Csi7f6qsVdj2q_2do'; // Dán Token từ BotFather vào đây
-const ADMIN_ID = '8144161968'; // Dán ID Telegram của bạn vào đây (Ví dụ: '12345678')
-const PORT = process.env.PORT || 3000; 
+/**
+ * ==========================================================
+ * 🛡️ CẤU HÌNH HỆ THỐNG GỐC - SHOP XTABOY VN
+ * ==========================================================
+ */
+const BOT_TOKEN = '8497777064:AAGt1C6asCO0p_T58rNDyn5ygqp1LZ6hHLA';
+const ADMIN_ID = '6182555207';
+const BRAND_NAME = 'SHOP XTABOY VN';
 
-// --- CẤU TRÚC DỮ LIỆU ---
 const DATA_PATH = path.join(__dirname, 'database.json');
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- HỆ THỐNG QUẢN LÝ DỮ LIỆU ---
-let db = { users: {}, products: [] };
+// Khởi tạo trạng thái hệ thống
+let db = {
+    users: {},
+    products: [],
+    bank: { stk: "0399226892", name: "NGUYEN VAN TRUONG", bankName: "MB" },
+    config: { 
+        welcome_image: null, 
+        status: "🚀 Hoạt động", 
+        version: "2.0.5",
+        last_update: new Date().toLocaleString('vi-VN')
+    },
+    logs: []
+};
 
-async function loadDB() {
+/**
+ * ==========================================================
+ * 📦 MODULE 1: QUẢN LÝ DỮ LIỆU & AUTO-SAVE
+ * ==========================================================
+ */
+async function syncDatabase() {
     try {
         if (await fs.exists(DATA_PATH)) {
-            db = await fs.readJson(DATA_PATH);
-            console.log('✅ Đã tải dữ liệu thành công từ database.json');
+            const currentData = await fs.readJson(DATA_PATH);
+            db = { ...db, ...currentData };
+            console.log(`[${BRAND_NAME}] 📥 Đồng bộ cơ sở dữ liệu hoàn tất.`);
         } else {
-            await saveDB();
+            await saveDatabase();
         }
-    } catch (err) {
-        console.error('❌ Lỗi tải DB:', err);
-    }
+    } catch (err) { console.error(`[${BRAND_NAME}] ❌ Lỗi đồng bộ:`, err); }
 }
 
-async function saveDB() {
-    try {
-        await fs.writeJson(DATA_PATH, db, { spaces: 2 });
-    } catch (err) {
-        console.error('❌ Lỗi lưu DB:', err);
-    }
+async function saveDatabase() {
+    try { 
+        db.config.last_update = new Date().toLocaleString('vi-VN');
+        await fs.writeJson(DATA_PATH, db, { spaces: 4 }); 
+    } catch (err) { console.error(`[${BRAND_NAME}] ❌ Lỗi lưu trữ:`, err); }
 }
 
-// --- KHỞI TẠO SERVER GIỮ BOT SỐNG ---
-const app = express();
-app.get('/', (req, res) => res.send('THUETOOLVIP BOT IS RUNNING!'));
-app.listen(PORT, () => console.log(`🌐 Server đang chạy tại Port: ${PORT}`));
+const toVND = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
-// --- TIỆN ÍCH ---
-const money = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
+/**
+ * ==========================================================
+ * 🤖 MODULE 2: AUTO-UPDATE & SYSTEM MAINTENANCE
+ * ==========================================================
+ */
+// Tự động kiểm tra hệ thống mỗi phút (Auto Update Status)
+cron.schedule('* * * * *', async () => {
+    console.log(`[${BRAND_NAME}] 🔄 Đang thực thi Auto-Update hệ thống...`);
+    // Kiểm tra hàng tồn kho, nếu hết hàng tự động cập nhật trạng thái
+    db.products.forEach(p => {
+        if (p.stock.length === 0) p.status = "Hết hàng";
+        else p.status = "Còn hàng";
+    });
+    await saveDatabase();
+});
 
-const mainMenu = () => Markup.inlineKeyboard([
-    [Markup.button.callback('🎮 Mua Acc Game', 'list_acc'), Markup.button.callback('🛠 Mua Bản Hack', 'list_hack')],
-    [Markup.button.callback('🔑 Thuê Key Tool', 'list_key'), Markup.button.callback('💳 Nạp Tiền', 'deposit')],
-    [Markup.button.callback('👤 Thông Tin', 'user_info'), Markup.button.callback('⚠️ Báo Lỗi', 'report')],
-    [Markup.button.url('🌐 Admin', 'https://t.me/thuetoolvip1')]
+/**
+ * ==========================================================
+ * 🖥️ MODULE 3: GIAO DIỆN NGƯỜI DÙNG (PREMIUM UI)
+ * ==========================================================
+ */
+const MainMenuKeyboard = () => Markup.inlineKeyboard([
+    [Markup.button.callback('🎮 TÀI KHOẢN GAME', 'nav_acc'), Markup.button.callback('🛠️ PHẦN MỀM HACK', 'nav_hack')],
+    [Markup.button.callback('🔑 THUÊ KEY TOOL', 'nav_key'), Markup.button.callback('💳 NẠP TIỀN VÍ', 'nav_deposit')],
+    [Markup.button.callback('👤 THÔNG TIN', 'nav_profile'), Markup.button.callback('📜 LỊCH SỬ', 'nav_history')],
+    [Markup.button.url('🤝 HỖ TRỢ TRỰC TUYẾN', 'https://t.me/thuetoolvip1')]
 ]);
 
-// --- XỬ LÝ START ---
+/**
+ * ==========================================================
+ * 🤖 MODULE 4: XỬ LÝ LỆNH NGƯỜI DÙNG
+ * ==========================================================
+ */
+
 bot.start(async (ctx) => {
     const uid = ctx.from.id.toString();
     if (!db.users[uid]) {
-        db.users[uid] = {
-            telegramId: uid,
-            username: ctx.from.username || "NoName",
-            balance: 0,
-            history: []
-        };
-        await saveDB();
+        db.users[uid] = { id: uid, balance: 0, totalBuy: 0, history: [], date: new Date().toLocaleDateString('vi-VN') };
+        await saveDatabase();
     }
-    ctx.replyWithMarkdown(`👋 **Chào mừng ${ctx.from.first_name}!**\n💰 Số dư: \`${money(db.users[uid].balance)}\`\n🛒 Chọn dịch vụ bên dưới:`, mainMenu());
+
+    const welcomeMsg = 
+        `✨ **XIN CHÀO QUÝ KHÁCH ĐẾN VỚI ${BRAND_NAME}** ✨\n` +
+        `──────────────────────────\n` +
+        `👋 Quý khách: **${ctx.from.first_name}**\n` +
+        `💰 Số dư hiện tại: \`${toVND(db.users[uid].balance)}\`\n` +
+        `🆔 Mã định danh: \`${uid}\`\n` +
+        `📡 Trạng thái: \`${db.config.status}\`\n` +
+        `──────────────────────────\n` +
+        `Chúng tôi tự hào là đơn vị cung cấp giải pháp Game tự động hàng đầu. Vui lòng chọn dịch vụ:`;
+
+    if (db.config.welcome_image) {
+        await ctx.replyWithPhoto(db.config.welcome_image, { caption: welcomeMsg, parse_mode: 'Markdown', ...MainMenuKeyboard() });
+    } else {
+        await ctx.replyWithMarkdown(welcomeMsg, MainMenuKeyboard());
+    }
 });
 
-// --- HIỂN THỊ SẢN PHẨM ---
-const renderProducts = async (ctx, type) => {
-    const products = db.products.filter(p => p.type === type);
-    if (!products.length) return ctx.reply("Hệ thống đang cập nhật hàng, vui lòng quay lại sau.");
+// Xử lý xem danh sách sản phẩm
+const renderList = async (ctx, type) => {
+    const list = db.products.filter(p => p.type === type);
+    if (list.length === 0) return ctx.reply("🏮 Danh mục này hiện đang trong quá trình bảo trì. Xin quý khách vui lòng quay lại sau!");
 
-    for (const p of products) {
-        const inStock = p.stock.length;
-        const caption = `📌 **${p.name}**\n💰 Giá: ${money(p.price)}\n📝 Mô tả: ${p.description}\n📊 Tình trạng: ${inStock > 0 ? `Còn ${inStock}` : '❌ Hết hàng'}`;
+    for (const item of list) {
+        const stock = item.stock.length;
+        const msg = `💎 **SẢN PHẨM: ${item.name.toUpperCase()}**\n` +
+                    `────────────────────\n` +
+                    `💰 Giá niêm yết: \`${toVND(item.price)}\`\n` +
+                    `📝 Mô tả: ${item.description}\n` +
+                    `📊 Tình trạng: ${stock > 0 ? `✅ Còn ${stock}` : '❌ Tạm hết hàng'}\n` +
+                    `────────────────────`;
         
-        const btns = [];
-        if (inStock > 0) btns.push([Markup.button.callback(`🛒 Mua ngay`, `buy_${p.id}`)]);
-        btns.push([Markup.button.callback('⬅️ Quay lại', 'back')]);
-
-        try {
-            if (p.image) {
-                await ctx.replyWithPhoto(p.image, { caption, parse_mode: 'Markdown', ...Markup.inlineKeyboard(btns) });
-            } else {
-                await ctx.replyWithMarkdown(caption, Markup.inlineKeyboard(btns));
-            }
-        } catch (e) { console.error("Lỗi gửi sản phẩm:", e.message); }
+        const btns = stock > 0 ? [[Markup.button.callback('🛒 MUA NGAY', `buy_${item.id}`)], [Markup.button.callback('⬅️ QUAY LẠI', 'back')]] : [[Markup.button.callback('⬅️ QUAY LẠI', 'back')]];
+        
+        if (item.image) await ctx.replyWithPhoto(item.image, { caption: msg, parse_mode: 'Markdown', ...Markup.inlineKeyboard(btns) });
+        else await ctx.replyWithMarkdown(msg, Markup.inlineKeyboard(btns));
     }
 };
 
-bot.action('list_acc', ctx => renderProducts(ctx, 'acc'));
-bot.action('list_hack', ctx => renderProducts(ctx, 'hack'));
-bot.action('list_key', ctx => renderProducts(ctx, 'key'));
+bot.action('nav_acc', ctx => renderList(ctx, 'acc'));
+bot.action('nav_hack', ctx => renderList(ctx, 'hack'));
+bot.action('nav_key', ctx => renderList(ctx, 'key'));
 
-// --- MUA HÀNG ---
-bot.action(/^buy_(.+)$/, async (ctx) => {
-    const pId = ctx.match[1];
-    const uid = ctx.from.id.toString();
-    const user = db.users[uid];
-    const product = db.products.find(p => p.id === pId);
-
-    if (!product || product.stock.length === 0) return ctx.answerCbQuery("❌ Đã hết hàng!", { show_alert: true });
-    if (user.balance < product.price) return ctx.answerCbQuery("⚠️ Không đủ tiền!", { show_alert: true });
-
-    const dataPaid = product.stock.shift();
-    user.balance -= product.price;
-    user.history.push({ name: product.name, date: new Date() });
-    await saveDB();
-
-    await ctx.replyWithMarkdown(`✅ **MUA THÀNH CÔNG!**\n\n📦 SP: *${product.name}*\n🔑 **NỘI DUNG:**\n\`${dataPaid}\``,
-        Markup.inlineKeyboard([[Markup.button.callback('🏠 Về Menu', 'back')]])
-    );
-    bot.telegram.sendMessage(ADMIN_ID, `🔔 KHÁCH ${uid} MUA ${product.name}`).catch(() => {});
-});
-
-// --- NẠP TIỀN ---
-bot.action('deposit', async (ctx) => {
-    const stk = "0362781497"; 
-    const name = "NGUYEN VAN DU";
-    const desc = `VIP${ctx.from.id}`;
-    const qr = `https://img.vietqr.io/image/vpbank-${stk}-compact2.jpg?addInfo=${desc}&accountName=${encodeURIComponent(name)}`;
-    ctx.replyWithPhoto(qr, {
-        caption: `💳 **NẠP TIỀN**\n🏦 VPBANK\n🔢 STK: \`${stk}\`\n👤 Chủ TK: **${name}**\n📝 Nội dung: \`${desc}\``,
-        parse_mode: 'Markdown'
+// Xử lý nạp tiền chuyên nghiệp
+bot.action('nav_deposit', async (ctx) => {
+    const { stk, name, bankName } = db.bank;
+    const memo = `XTABOY${ctx.from.id}`;
+    const qr = `https://img.vietqr.io/image/${bankName}-${stk}-compact2.jpg?addInfo=${memo}&accountName=${encodeURIComponent(name)}`;
+    
+    ctx.replyWithPhoto(qr, { 
+        caption: `💳 **THÔNG TIN THANH TOÁN TỰ ĐỘNG**\n\n` +
+                 `🏦 Ngân hàng: **${bankName}**\n` +
+                 `🔢 Số tài khoản: \`${stk}\`\n` +
+                 `👤 Chủ tài khoản: **${name}**\n` +
+                 `📝 Nội dung chuyển: \`${memo}\` (Bắt buộc)\n\n` +
+                 `⚠️ **GHI CHÚ:** Hệ thống tự động kiểm tra giao dịch mỗi 60 giây. Quý khách vui lòng chuyển đúng nội dung.`,
+        parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ QUAY LẠI', 'back')]])
     });
 });
 
-// --- ADMIN CONTROL ---
+/**
+ * ==========================================================
+ * 👑 MODULE 5: QUẢN TRỊ VIÊN CẤP CAO (ADMIN SUPREME)
+ * ==========================================================
+ */
+const isAdmin = (ctx) => ctx.from.id.toString() === ADMIN_ID;
+
+// --- XỬ LÝ HÌNH ẢNH TỰ ĐỘNG (AUTO-UP) ---
 bot.on('photo', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    const caption = ctx.message.caption;
-    if (caption && caption.startsWith('/add')) {
-        const parts = caption.split('|');
-        const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-        db.products.push({
-            id: Date.now().toString(),
-            type: parts[0].replace('/add ', '').trim(),
-            name: parts[1].trim(),
-            price: parseInt(parts[2]),
-            description: parts[3].trim(),
-            image: photoId,
-            instruction: parts[4].trim(),
-            stock: []
-        });
-        await saveDB();
-        ctx.reply("✅ Đã thêm sản phẩm!");
+    if (!isAdmin(ctx)) return;
+    const caption = ctx.message.caption || "";
+    const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+
+    // Lệnh 1: Thiết lập Banner Start
+    if (caption === '/setbanner') {
+        db.config.welcome_image = photoId;
+        await saveDatabase();
+        return ctx.reply("✨ [Hệ thống] Đã cập nhật ảnh đại diện Shop thành công!");
+    }
+
+    // Lệnh 2: Thêm sản phẩm kèm ảnh trực tiếp
+    if (caption.startsWith('/add')) {
+        try {
+            const [type, name, price, desc, inst] = caption.replace('/add ', '').split('|').map(s => s.trim());
+            db.products.push({ 
+                id: Date.now().toString(), 
+                type, name, 
+                price: parseInt(price), 
+                description: desc, 
+                instruction: inst, 
+                image: photoId, 
+                stock: [] 
+            });
+            await saveDatabase();
+            ctx.reply(`✅ Đã niêm yết thành công sản phẩm: **${name}**`);
+        } catch (e) { ctx.reply("❌ Lỗi định dạng! Vui lòng dùng: /add loại|tên|giá|mô tả|hd"); }
     }
 });
 
+// --- CÁC LỆNH ĐIỀU KHIỂN HỆ THỐNG ---
+
+// Cài đặt trạng thái Shop: /setstatus [Nội dung]
+bot.command('setstatus', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    db.config.status = ctx.message.text.replace('/setstatus ', '');
+    await saveDatabase();
+    ctx.reply("✅ Đã cập nhật trạng thái hệ thống!");
+});
+
+// Kiểm tra kho hàng nhanh: /checkstock
+bot.command('checkstock', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    let report = "📊 **BÁO CÁO KHO HÀNG**\n\n";
+    db.products.forEach(p => {
+        report += `• ${p.name}: ${p.stock.length} sản phẩm\n`;
+    });
+    ctx.reply(report);
+});
+
+// Duyệt tiền: /duyet [ID] [Tiền]
 bot.command('duyet', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    const [_, targetId, amount] = ctx.message.text.split(' ');
-    if (db.users[targetId]) {
-        db.users[targetId].balance += parseInt(amount);
-        await saveDB();
-        ctx.reply(`✅ Đã nạp ${amount} cho ${targetId}`);
+    if (!isAdmin(ctx)) return;
+    const [_, uid, amt] = ctx.message.text.split(' ');
+    if (db.users[uid]) {
+        db.users[uid].balance += parseInt(amt);
+        await saveDatabase();
+        ctx.reply(`✅ Đã nạp ${toVND(amt)} vào ID: ${uid}`);
+        bot.telegram.sendMessage(uid, `🎉 **${BRAND_NAME} XIN THÔNG BÁO:**\nTài khoản của quý khách đã được cộng thành công: **${toVND(amt)}**.\nChúc quý khách mua sắm vui vẻ!`);
     }
 });
 
+// Cập nhật hàng loạt: /up [Tên SP] | [Mã1, Mã2, Mã3]
 bot.command('up', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    const input = ctx.message.text.split('/up ')[1].split('|');
-    const p = db.products.find(x => x.name === input[0].trim());
-    if (p) {
-        p.stock.push(...input[1].split(',').map(s => s.trim()));
-        await saveDB();
-        ctx.reply("✅ Đã cập nhật kho!");
-    }
+    if (!isAdmin(ctx)) return;
+    try {
+        const [name, rawStock] = ctx.message.text.replace('/up ', '').split('|').map(s => s.trim());
+        const product = db.products.find(x => x.name === name);
+        if (product) {
+            const items = rawStock.split(',').map(s => s.trim());
+            product.stock.push(...items);
+            await saveDatabase();
+            ctx.reply(`✅ Đã nạp thêm ${items.length} đơn vị hàng vào kho **${name}**`);
+        }
+    } catch (e) { ctx.reply("❌ Cú pháp: /up Tên SP | mã1, mã2"); }
 });
 
-bot.command('backup', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    ctx.replyWithDocument({ source: DATA_PATH });
+// Sao lưu khẩn cấp: /backup
+bot.command('backup', (ctx) => {
+    if (isAdmin(ctx)) ctx.replyWithDocument({ source: DATA_PATH }, { caption: `📅 Backup ${BRAND_NAME} - ${new Date().toLocaleString()}` });
 });
 
-bot.on('document', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    if (ctx.message.caption === '/restore') {
-        const fileLink = await bot.telegram.getFileLink(ctx.message.document.file_id);
-        const response = await axios.get(fileLink.href);
-        db = response.data;
-        await saveDB();
-        ctx.reply("✅ Đã khôi phục dữ liệu!");
-    }
+/**
+ * ==========================================================
+ * 📁 MODULE 6: TIỆN ÍCH NGƯỜI DÙNG & LỊCH SỬ
+ * ==========================================================
+ */
+bot.action('nav_profile', ctx => {
+    const user = db.users[ctx.from.id.toString()];
+    ctx.replyWithMarkdown(`👤 **THÔNG TIN TÀI KHOẢN**\n──────────────────\n🆔 Mã khách hàng: \`${ctx.from.id}\`\n💰 Số dư ví: *${toVND(user.balance)}*\n📅 Ngày đăng ký: *${user.date}*\n──────────────────`, Markup.inlineKeyboard([[Markup.button.callback('🏠 TRỞ LẠI', 'back')]]));
+});
+
+bot.action('nav_history', ctx => {
+    const user = db.users[ctx.from.id.toString()];
+    if (!user.history || user.history.length === 0) return ctx.answerCbQuery("🏮 Quý khách chưa có giao dịch nào!");
+    let log = "📜 **LỊCH SỬ GIAO DỊCH GẦN NHẤT**\n\n";
+    user.history.slice(-5).forEach(h => {
+        log += `🛒 ${h.name}\n💰 Giá: ${toVND(h.price)}\n⏰ ${h.time}\n\n`;
+    });
+    ctx.reply(log, Markup.inlineKeyboard([[Markup.button.callback('🏠 TRỞ LẠI', 'back')]]));
 });
 
 bot.action('back', async (ctx) => {
     try { await ctx.deleteMessage(); } catch (e) {}
-    const uid = ctx.from.id.toString();
-    ctx.replyWithMarkdown(`👋 **Chào mừng!**\n💰 Số dư: \`${money(db.users[uid].balance)}\``, mainMenu());
+    bot.handleUpdate({ message: { ...ctx.update.callback_query.message, text: '/start', from: ctx.from }, update_id: 0 });
 });
 
-// --- KHỞI CHẠY ---
-loadDB().then(() => {
-    bot.launch().then(() => console.log("🚀 BOT IS RUNNING!")).catch(err => console.error(err));
+/**
+ * ==========================================================
+ * 🌐 MODULE 7: KHỞI TẠO SERVER & KẾT NỐI
+ * ==========================================================
+ */
+const app = express();
+app.get('/', (req, res) => res.send(`🤖 ${BRAND_NAME} Automation System is Working...`));
+app.listen(process.env.PORT || 3000);
+
+syncDatabase().then(() => {
+    bot.launch();
+    console.log(`🚀 [${BRAND_NAME}] HỆ THỐNG ĐÃ ONLINE - VERSION ${db.config.version}`);
 });
