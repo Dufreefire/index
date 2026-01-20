@@ -98,6 +98,84 @@ const getHomeKeyboard = () => Markup.inlineKeyboard([
     ]
 ]);
 
+/**
+ * ==========================================================
+ * 👤 LAYER 5: MODULE THÔNG TIN KHÁCH HÀNG & LỊCH SỬ
+ * ==========================================================
+ */
+// Xử lý Trang cá nhân (Bản chống lỗi)
+bot.action('view_profile', async (ctx) => {
+    try {
+        const uid = ctx.from.id.toString();
+        let u = db.users[uid];
+
+        // Cơ chế tự sửa lỗi dữ liệu nếu thiếu trường
+        if (!u) {
+            db.users[uid] = { id: uid, name: ctx.from.first_name, balance: 0, spent: 0, orders: [], joinDate: new Date().toLocaleDateString('vi-VN') };
+            u = db.users[uid];
+        }
+        if (u.spent === undefined) u.spent = 0;
+
+        const profileMsg = 
+            `👤 **THÔNG TIN TÀI KHOẢN**\n` +
+            `──────────────────────\n` +
+            `🆔 Mã khách hàng: \`${u.id}\`\n` +
+            `👤 Tên hiển thị: **${ctx.from.first_name}**\n` +
+            `💰 Số dư hiện tại: *${formatCurrency(u.balance)}*\n` +
+            `💸 Tổng chi tiêu: *${formatCurrency(u.spent)}*\n` +
+            `📅 Ngày gia nhập: *${u.joinDate || 'Không rõ'}*\n` +
+            `──────────────────────`;
+
+        await ctx.editMessageCaption(profileMsg, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🏠 QUAY LẠI MENU', 'nav_back')]])
+        }).catch(async () => {
+            // Nếu không có ảnh thì gửi tin nhắn văn bản
+            await ctx.replyWithMarkdown(profileMsg, Markup.inlineKeyboard([[Markup.button.callback('🏠 QUAY LẠI MENU', 'nav_back')]]));
+        });
+    } catch (e) {
+        console.error("Lỗi Profile:", e);
+        ctx.answerCbQuery("⚠️ Có lỗi xảy ra khi tải hồ sơ!");
+    }
+});
+
+// Xử lý Lịch sử mua hàng (Bản chống lỗi)
+bot.action('view_history', async (ctx) => {
+    try {
+        const uid = ctx.from.id.toString();
+        const u = db.users[uid];
+
+        // Kiểm tra xem có lịch sử đơn hàng không
+        if (!u || !u.orders || u.orders.length === 0) {
+            return ctx.answerCbQuery("🏮 Quý khách chưa thực hiện giao dịch nào!", { show_alert: true });
+        }
+
+        let historyMsg = `📜 **LỊCH SỬ GIAO DỊCH GẦN ĐÂY**\n\n`;
+        
+        // Lấy tối đa 5 đơn hàng mới nhất
+        const lastOrders = u.orders.slice(-5).reverse();
+        
+        lastOrders.forEach((order, index) => {
+            historyMsg += 
+                `${index + 1}. 📦 **${order.name}**\n` +
+                `🔑 Mã: \`${order.code}\`\n` +
+                `⏰ Lúc: ${order.time}\n` +
+                `──────────────────\n`;
+        });
+
+        await ctx.editMessageCaption(historyMsg, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🏠 QUAY LẠI MENU', 'nav_back')]])
+        }).catch(async () => {
+            await ctx.replyWithMarkdown(historyMsg, Markup.inlineKeyboard([[Markup.button.callback('🏠 QUAY LẠI MENU', 'nav_back')]]));
+        });
+
+    } catch (e) {
+        console.error("Lỗi History:", e);
+        ctx.answerCbQuery("⚠️ Không thể tải lịch sử mua hàng!");
+    }
+});
+
 // Xử lý lệnh /start
 bot.start(async (ctx) => {
     const uid = ctx.from.id.toString();
@@ -223,12 +301,6 @@ bot.action('view_deposit', async (ctx) => {
         `- Tiền sẽ được cộng sau 1-3 phút khi hệ thống nhận được.`;
 
     ctx.replyWithPhoto(qrUrl, { caption: depositMsg, parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ QUAY LẠI', 'nav_back')]]) });
-});
-
-bot.action('view_profile', ctx => {
-    const u = db.users[ctx.from.id.toString()];
-    const msg = `👤 **THÔNG TIN KHÁCH HÀNG**\n──────────────────\n🆔 ID: \`${u.id}\`\n💰 Số dư: *${formatCurrency(u.balance)}*\n💸 Đã chi: *${formatCurrency(u.spent)}*\n📅 Ngày tham gia: *${u.joinDate}*`;
-    ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([[Markup.button.callback('🏠 VỀ TRANG CHỦ', 'nav_back')]]));
 });
 
 bot.action('view_history', ctx => {
