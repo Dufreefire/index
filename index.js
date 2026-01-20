@@ -1,39 +1,49 @@
 const { Telegraf, Markup } = require('telegraf');
-const mongoose = require('mongoose');
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs-extra');
+const path = require('path');
 require('dotenv').config();
+
+// --- CẤU HÌNH ĐƯỜNG DẪN FILE DỮ LIỆU ---
+const DATA_PATH = path.join(__dirname, 'database.json');
 
 // --- KHỞI TẠO SERVER GIỮ BOT SỐNG ---
 const app = express();
-app.get('/', (req, res) => res.send('THUETOOLVIP BOT IS RUNNING!'));
+app.get('/', (req, res) => res.send('THUETOOLVIP BOT IS RUNNING WITH JSON!'));
 app.listen(process.env.PORT || 3000);
 
-// --- KẾT NỐI DATABASE ---
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ MongoDB Connected'))
-    .catch(err => console.error('❌ DB Error:', err));
+// --- HỆ THỐNG QUẢN LÝ DỮ LIỆU JSON ---
+let db = {
+    users: {},    // Lưu thông tin người dùng
+    products: []  // Lưu danh sách sản phẩm
+};
 
-// --- CẤU TRÚC DỮ LIỆU ---
-const User = mongoose.model('User', {
-    telegramId: String,
-    username: String,
-    balance: { type: Number, default: 0 },
-    history: Array
-});
+// Hàm tải dữ liệu từ file
+async function loadDB() {
+    try {
+        if (await fs.exists(DATA_PATH)) {
+            db = await fs.readJson(DATA_PATH);
+            console.log('✅ Đã tải dữ liệu thành công từ database.json');
+        } else {
+            await saveDB();
+        }
+    } catch (err) {
+        console.error('❌ Lỗi tải DB:', err);
+    }
+}
 
-const Product = mongoose.model('Product', {
-    type: String, // 'acc', 'hack', 'key'
-    name: String,
-    price: Number,
-    description: String,
-    image: String,
-    instruction: String, // Link cài đặt hoặc hướng dẫn
-    stock: { type: Array, default: [] } // Danh sách acc/key để bán
-});
+// Hàm lưu dữ liệu vào file
+async function saveDB() {
+    try {
+        await fs.writeJson(DATA_PATH, db, { spaces: 2 });
+    } catch (err) {
+        console.error('❌ Lỗi lưu DB:', err);
+    }
+}
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const ADMIN_ID = process.env.ADMIN_ID; // Lấy từ biến môi trường
+const ADMIN_ID = process.env.ADMIN_ID; 
 
 // --- TIỆN ÍCH ---
 const money = (val) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
@@ -43,22 +53,27 @@ const mainMenu = () => Markup.inlineKeyboard([
     [Markup.button.callback('🎮 Mua Acc Game', 'list_acc'), Markup.button.callback('🛠 Mua Bản Hack', 'list_hack')],
     [Markup.button.callback('🔑 Thuê Key Tool', 'list_key'), Markup.button.callback('💳 Nạp Tiền', 'deposit')],
     [Markup.button.callback('👤 Thông Tin', 'user_info'), Markup.button.callback('⚠️ Báo Lỗi', 'report')],
-    [Markup.button.url('🌐 Dev', '@thuetoolvip1')]
+    [Markup.button.url('🌐 Admin', '@thuetoolvip1')]
 ]);
 
 // --- XỬ LÝ LỆNH START ---
 bot.start(async (ctx) => {
-    let user = await User.findOne({ telegramId: ctx.from.id });
-    if (!user) {
-        user = new User({ telegramId: ctx.from.id, username: ctx.from.username });
-        await user.save();
+    const uid = ctx.from.id.toString();
+    if (!db.users[uid]) {
+        db.users[uid] = {
+            telegramId: uid,
+            username: ctx.from.username || "NoName",
+            balance: 0,
+            history: []
+        };
+        await saveDB();
     }
-    ctx.replyWithMarkdown(`👋 **Chào mừng ${ctx.from.first_name}!**\n💰 Số dư: \`${money(user.balance)}\`\n🛒 Chọn dịch vụ bên dưới:`, mainMenu());
+    ctx.replyWithMarkdown(`👋 **Chào mừng ${ctx.from.first_name}!**\n💰 Số dư: \`${money(db.users[uid].balance)}\`\n🛒 Chọn dịch vụ bên dưới:`, mainMenu());
 });
 
 // --- HIỂN THỊ DANH SÁCH & TRẠNG THÁI KHO ---
 const renderProducts = async (ctx, type) => {
-    const products = await Product.find({ type });
+    const products = db.products.filter(p => p.type === type);
     if (!products.length) return ctx.reply("Hệ thống đang cập nhật hàng, vui lòng quay lại sau.");
 
     for (const p of products) {
@@ -66,7 +81,7 @@ const renderProducts = async (ctx, type) => {
         const caption = `📌 **${p.name}**\n💰 Giá: ${money(p.price)}\n📝 Mô tả: ${p.description}\n📊 Tình trạng: ${inStock > 0 ? `Còn ${inStock}` : '❌ Hết hàng'}`;
         
         const btns = [];
-        if (inStock > 0) btns.push([Markup.button.callback(`🛒 Mua ngay`, `buy_${p._id}`)]);
+        if (inStock > 0) btns.push([Markup.button.callback(`🛒 Mua ngay`, `buy_${p.id}`)]);
         btns.push([Markup.button.callback('⬅️ Quay lại', 'back')]);
 
         if (p.image) {
@@ -84,8 +99,9 @@ bot.action('list_key', (ctx) => renderProducts(ctx, 'key'));
 // --- XỬ LÝ THANH TOÁN & TRẢ HÀNG ---
 bot.action(/^buy_(.+)$/, async (ctx) => {
     const pId = ctx.match[1];
-    const user = await User.findOne({ telegramId: ctx.from.id });
-    const product = await Product.findById(pId);
+    const uid = ctx.from.id.toString();
+    const user = db.users[uid];
+    const product = db.products.find(p => p.id === pId);
 
     if (!product || product.stock.length === 0) return ctx.answerCbQuery("❌ Đã hết hàng!");
     if (user.balance < product.price) return ctx.answerCbQuery("⚠️ Không đủ tiền, hãy nạp thêm!");
@@ -93,8 +109,9 @@ bot.action(/^buy_(.+)$/, async (ctx) => {
     // Trừ tiền và lấy hàng từ kho
     const dataPaid = product.stock.shift();
     user.balance -= product.price;
-    await user.save();
-    await product.save();
+    user.history.push({ name: product.name, date: new Date() });
+    
+    await saveDB();
 
     // THÔNG BÁO CHO NGƯỜI MUA
     await ctx.replyWithMarkdown(
@@ -110,12 +127,12 @@ bot.action(/^buy_(.+)$/, async (ctx) => {
     );
 
     // THÔNG BÁO CHO ADMIN
-    bot.telegram.sendMessage(ADMIN_ID, `🔔 **THÔNG BÁO DOANH THU**\n👤 Khách: ${ctx.from.id}\n🛒 Mua: ${product.name}\n💰 Tiền: ${money(product.price)}`);
+    bot.telegram.sendMessage(ADMIN_ID, `🔔 **THÔNG BÁO DOANH THU**\n👤 Khách: ${uid}\n🛒 Mua: ${product.name}\n💰 Tiền: ${money(product.price)}`);
 });
 
 // --- NẠP TIỀN TỰ ĐỘNG VPBANK ---
 bot.action('deposit', async (ctx) => {
-    const stk = "0362781497"; // SỐ TK VPBANK
+    const stk = "0362781497"; 
     const name = "NGUYEN VAN DU";
     const desc = `VIP${ctx.from.id}`;
     const qr = `https://img.vietqr.io/image/vpbank-${stk}-compact2.jpg?addInfo=${desc}&accountName=${encodeURIComponent(name)}`;
@@ -131,57 +148,88 @@ bot.action('deposit', async (ctx) => {
     });
 });
 
-// --- ADMIN PANEL (THÊM HÀNG CÓ ẢNH QUA BOT) ---
-// Cú pháp: /add [Loại] [Tên] [Giá] [Mô tả] [Hướng dẫn] - Sau đó gửi ảnh kèm caption
+// --- ADMIN PANEL: THÊM HÀNG ---
 bot.on('photo', async (ctx) => {
     if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
-    
     const caption = ctx.message.caption;
     if (caption && caption.startsWith('/add')) {
-        const parts = caption.split('|'); // /add type|name|price|desc|instr
+        const parts = caption.split('|');
         const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-        const photoUrl = await bot.telegram.getFileLink(photoId);
 
-        const newP = new Product({
+        db.products.push({
+            id: Date.now().toString(),
             type: parts[0].replace('/add ', '').trim(),
             name: parts[1].trim(),
             price: parseInt(parts[2]),
             description: parts[3].trim(),
-            image: photoUrl.href,
-            instruction: parts[4].trim()
+            image: photoId, // Sử dụng file_id để gửi ảnh nhanh hơn
+            instruction: parts[4].trim(),
+            stock: []
         });
-        await newP.save();
-        ctx.reply("✅ Đã thêm sản phẩm có ảnh thành công!");
+        await saveDB();
+        ctx.reply("✅ Đã thêm sản phẩm mới thành công!");
     }
 });
 
-// --- ADMIN DUYỆT TIỀN ---
+// --- ADMIN PANEL: DUYỆT TIỀN ---
 bot.command('duyet', async (ctx) => {
     if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
     const [_, targetId, amount] = ctx.message.text.split(' ');
-    const user = await User.findOneAndUpdate({ telegramId: targetId }, { $inc: { balance: parseInt(amount) } }, { new: true });
-    
-    if (user) {
+    if (db.users[targetId]) {
+        db.users[targetId].balance += parseInt(amount);
+        await saveDB();
         ctx.reply(`✅ Đã nạp ${money(parseInt(amount))} cho ${targetId}`);
-        bot.telegram.sendMessage(targetId, `🎉 **THÔNG BÁO NẠP TIỀN**\n\nTài khoản của bạn đã được cộng: *${money(parseInt(amount))}*\nSố dư mới: *${money(user.balance)}*`, { parse_mode: 'Markdown' });
+        bot.telegram.sendMessage(targetId, `🎉 **THÔNG BÁO NẠP TIỀN**\n\nTài khoản của bạn đã được cộng: *${money(parseInt(amount))}*\nSố dư mới: *${money(db.users[targetId].balance)}*`, { parse_mode: 'Markdown' });
+    } else {
+        ctx.reply("❌ Không tìm thấy User ID này!");
     }
 });
 
-// --- THÊM KHO (STOCK) ---
+// --- ADMIN PANEL: THÊM KHO (STOCK) ---
 bot.command('up', async (ctx) => {
     if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
     const input = ctx.message.text.split('/up ')[1].split('|');
     const name = input[0].trim();
     const stockData = input[1].split(',').map(s => s.trim());
 
-    const p = await Product.findOne({ name });
+    const p = db.products.find(x => x.name === name);
     if (p) {
         p.stock.push(...stockData);
-        await p.save();
+        await saveDB();
         ctx.reply(`✅ Đã nạp thêm ${stockData.length} tài khoản vào kho ${name}`);
     }
 });
 
-bot.action('back', (ctx) => ctx.editMessageCaption(`🔥 **CỬA HÀNG - MENU CHÍNH**`, mainMenu()));
+// --- HỆ THỐNG SAO LƯU (BACKUP/RESTORE) ---
+bot.command('backup', async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
+    await saveDB();
+    await ctx.replyWithDocument({ source: DATA_PATH }, { caption: "📂 **BẢN SAO LƯU DỮ LIỆU (database.json)**" });
+});
 
-bot.launch();
+bot.on('document', async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID.toString()) return;
+    if (ctx.message.caption === '/restore') {
+        const fileLink = await bot.telegram.getFileLink(ctx.message.document.file_id);
+        const response = await axios.get(fileLink.href);
+        db = response.data;
+        await saveDB();
+        ctx.reply("✅ **KHÔI PHỤC DỮ LIỆU THÀNH CÔNG!**");
+    }
+});
+
+bot.action('user_info', async (ctx) => {
+    const user = db.users[ctx.from.id.toString()];
+    ctx.replyWithMarkdown(`👤 **THÔNG TIN TÀI KHOẢN**\n\n🆔 ID: \`${ctx.from.id}\`\n💰 Số dư: *${money(user.balance)}*`);
+});
+
+bot.action('back', (ctx) => {
+    const uid = ctx.from.id.toString();
+    ctx.editMessageCaption(`👋 **Chào mừng ${ctx.from.first_name}!**\n💰 Số dư: \`${money(db.users[uid].balance)}\``, mainMenu());
+});
+
+// Chạy khởi động
+loadDB().then(() => {
+    bot.launch();
+    console.log("🚀 BOT IS RUNNING WITHOUT MONGO!");
+});
